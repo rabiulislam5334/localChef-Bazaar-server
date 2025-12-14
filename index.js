@@ -241,7 +241,31 @@ async function run() {
 
     /* -----------------------------
            AUTH: Firebase login -> issue server JWT + set httpOnly cookie
+
            ----------------------------- */
+    // Generate server JWT only by email
+    app.post(
+      "/jwt",
+      catchAsync(async (req, res) => {
+        const { email } = req.body;
+        if (!email) return res.status(400).json({ message: "Email required" });
+
+        const user = await client
+          .db("LocalChefBazaar")
+          .collection("users")
+          .findOne({ email });
+        if (!user) return res.status(404).json({ message: "User not found" });
+
+        const token = jwt.sign(
+          { email: user.email, role: user.role, id: user._id.toString() },
+          process.env.JWT_SECRET,
+          { expiresIn: "7d" }
+        );
+
+        res.json({ token });
+      })
+    );
+
     app.post(
       "/auth/firebase-login",
       catchAsync(async (req, res) => {
