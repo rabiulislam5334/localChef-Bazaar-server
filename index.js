@@ -963,6 +963,28 @@ async function run() {
         res.json(result);
       })
     );
+    // /*additonal*
+    // My Payments (User)
+
+    app.patch(
+      "/users/me",
+      verifyServerJwt,
+      catchAsync(async (req, res) => {
+        const allowedUpdates = {};
+        const { name, address, imageUrl } = req.body;
+
+        if (name) allowedUpdates.name = name;
+        if (address) allowedUpdates.address = address;
+        if (imageUrl) allowedUpdates.imageUrl = imageUrl;
+
+        const result = await usersCollection.updateOne(
+          { email: req.serverUser.email },
+          { $set: allowedUpdates }
+        );
+
+        res.json(result);
+      })
+    );
 
     /* -----------------------------
            ADMIN: PLATFORM STATISTICS
