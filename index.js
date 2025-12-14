@@ -689,11 +689,11 @@ async function run() {
 
 run().catch(console.dir);
 
-// 404
-app.use((req, res) => res.status(404).json({ message: "Route not found" }));
+// // 404
+// app.use((req, res) => res.status(404).json({ message: "Route not found" }));
 
-// Global error
-app.use((err, req, res, next) => {
-  console.error(err);
-  res.status(500).json({ message: "Server error", error: err.message });
-});
+// // Global error
+// app.use((err, req, res, next) => {
+//   console.error(err);
+//   res.status(500).json({ message: "Server error", error: err.message });
+// });
