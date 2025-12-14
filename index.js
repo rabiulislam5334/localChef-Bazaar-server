@@ -64,11 +64,14 @@ try {
 /* -------------------------
    MongoDB Connection
 ------------------------- */
-const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.mongodb.net/?retryWrites=true&w=majority&appName=LocalChefBazaar`;
+const uri = `mongodb+srv://${process.env.DB_USER}:${process.env.DB_PASS}@cluster0.fexg8tm.mongodb.net/?appName=Cluster0`;
 const client = new MongoClient(uri, {
-  serverApi: { version: ServerApiVersion.v1 },
+  serverApi: {
+    version: ServerApiVersion.v1,
+    strict: true,
+    deprecationErrors: true,
+  },
 });
-
 /* -------------------------
    Helpers
 ------------------------- */
