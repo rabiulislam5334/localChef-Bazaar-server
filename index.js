@@ -638,7 +638,29 @@ async function run() {
         res.json({ message: "Removed from favorites" });
       })
     );
+    /*Users Routes
+------------------------- */
 
+    // GET current user info based on JWT token from cookie
+    app.get(
+      "/users/me",
+      verifyServerJwt, // JWT টোকেন যাচাই করবে
+      catchAsync(async (req, res) => {
+        // req.user এ JWT payload (যেমন email) পাওয়া যায়
+        const user = await usersCollection.findOne({
+          email: req.user.email,
+        });
+
+        if (!user) {
+          // যদি user ডেটাবেসে না থাকে
+          return res.status(404).json({ message: "User not found in DB" });
+        }
+
+        // _id ছাড়া বাকি সব তথ্য ক্লায়েন্টের কাছে পাঠানো
+        const { _id, ...userInfo } = user;
+        res.json(userInfo);
+      })
+    );
     /* -------------------------
        Admin Stats & Users
     ------------------------- */
@@ -688,12 +710,3 @@ async function run() {
 }
 
 run().catch(console.dir);
-
-// // 404
-// app.use((req, res) => res.status(404).json({ message: "Route not found" }));
-
-// // Global error
-// app.use((err, req, res, next) => {
-//   console.error(err);
-//   res.status(500).json({ message: "Server error", error: err.message });
-// });
