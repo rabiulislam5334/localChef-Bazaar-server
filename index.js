@@ -640,27 +640,26 @@ async function run() {
     );
     /*Users Routes
 ------------------------- */
-
-    // GET current user info based on JWT token from cookie
-    app.get(
+    app.patch(
       "/users/me",
-      verifyServerJwt, // JWT টোকেন যাচাই করবে
+      verifyServerJwt,
       catchAsync(async (req, res) => {
-        // req.user এ JWT payload (যেমন email) পাওয়া যায়
-        const user = await usersCollection.findOne({
-          email: req.user.email,
-        });
+        const allowedUpdates = {};
+        const { name, address, imageUrl } = req.body;
 
-        if (!user) {
-          // যদি user ডেটাবেসে না থাকে
-          return res.status(404).json({ message: "User not found in DB" });
-        }
+        if (name) allowedUpdates.name = name;
+        if (address) allowedUpdates.address = address;
+        if (imageUrl) allowedUpdates.imageUrl = imageUrl;
 
-        // _id ছাড়া বাকি সব তথ্য ক্লায়েন্টের কাছে পাঠানো
-        const { _id, ...userInfo } = user;
-        res.json(userInfo);
+        const result = await usersCollection.updateOne(
+          { email: req.serverUser.email },
+          { $set: allowedUpdates }
+        );
+
+        res.json(result);
       })
     );
+
     /* -------------------------
        Admin Stats & Users
     ------------------------- */
