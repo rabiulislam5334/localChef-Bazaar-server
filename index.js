@@ -40,6 +40,7 @@ app.use(express.json({ limit: "2mb" }));
 app.use(cookieParser());
 
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
+console.log("Current CORS allowed origin:", CLIENT_URL);
 app.use(cors({ origin: CLIENT_URL, credentials: true }));
 
 const limiter = rateLimit({ windowMs: 60 * 1000, max: 120 });
