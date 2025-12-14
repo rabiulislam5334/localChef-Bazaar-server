@@ -686,6 +686,14 @@ async function run() {
         res.json(result);
       })
     );
+    // GET /payments/my
+    app.get("/payments/my", verifyServerJwt, async (req, res) => {
+      const payments = await paymentsCollection
+        .find({ userEmail: req.serverUser.email })
+        .sort({ paymentTime: -1 })
+        .toArray();
+      res.json(payments);
+    });
 
     /* -------------------------
        Admin Stats & Users
