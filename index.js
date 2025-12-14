@@ -965,7 +965,18 @@ async function run() {
     );
     // /*additonal*
     // My Payments (User)
+    app.get(
+      "/payments/my",
+      verifyServerJwt,
+      catchAsync(async (req, res) => {
+        const payments = await paymentsCollection
+          .find({ userEmail: req.serverUser.email })
+          .sort({ paymentTime: -1 })
+          .toArray();
 
+        res.json(payments);
+      })
+    );
     app.patch(
       "/users/me",
       verifyServerJwt,
