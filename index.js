@@ -714,6 +714,21 @@ async function run() {
         .toArray();
       res.json(payments);
     });
+    app.get(
+      "/users/:email/role",
+      verifyServerJwt,
+      catchAsync(async (req, res) => {
+        const email = req.params.email;
+
+        const user = await usersCollection.findOne({ email });
+
+        if (!user) {
+          return res.status(404).json({ role: "user" });
+        }
+
+        res.json({ role: user.role || "user" });
+      })
+    );
 
     /* -------------------------
        Admin Stats & Users
@@ -748,6 +763,20 @@ async function run() {
       catchAsync(async (req, res) => {
         const users = await usersCollection.find({}).toArray();
         res.json(users);
+      })
+    );
+    // Get all requests
+    app.get(
+      "/admin/requests",
+      verifyServerJwt,
+      verifyAdmin,
+      catchAsync(async (req, res) => {
+        const requests = await requestsCollection
+          .find({})
+          .sort({ requestTime: -1 })
+          .toArray();
+
+        res.json(requests);
       })
     );
 
