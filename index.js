@@ -779,6 +779,21 @@ async function run() {
         res.json(requests);
       })
     );
+    app.patch(
+      "/admin/requests/:id/reject",
+      verifyServerJwt,
+      verifyAdmin,
+      catchAsync(async (req, res) => {
+        const id = req.params.id;
+
+        const result = await requestsCollection.updateOne(
+          { _id: toObjectId(id) },
+          { $set: { requestStatus: "rejected" } }
+        );
+
+        res.json(result);
+      })
+    );
 
     /* -------------------------
        Server listener
