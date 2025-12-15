@@ -41,7 +41,7 @@ app.use(cookieParser());
 
 const CLIENT_URL = process.env.CLIENT_URL || "http://localhost:5173";
 console.log("Current CORS allowed origin:", CLIENT_URL);
-app.use(cors({ origin: CLIENT_URL, credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 
 const limiter = rateLimit({ windowMs: 60 * 1000, max: 120 });
 app.use(limiter);
@@ -324,20 +324,58 @@ async function run() {
       verifyChef,
       catchAsync(async (req, res) => {
         const meal = req.body;
-        const chefUser = req.currentUser;
-        if (!meal.foodName || !meal.price || !meal.foodImage)
-          return res.status(400).json({ message: "Missing fields" });
+        const chefUser = req.currentUser; // verifyChef থেকে আসা full user document (DB থেকে)
+
+        // Required fields validation
+        if (!meal.foodName || !meal.price || !meal.foodImage) {
+          return res
+            .status(400)
+            .json({
+              message: "Missing required fields: foodName, price, foodImage",
+            });
+        }
+
+        // Safety: chefUser & _id exist check (middleware fail হলে prevent করা)
+        if (!chefUser || !chefUser._id) {
+          return res
+            .status(500)
+            .json({
+              message: "Chef authentication failed or user data missing",
+            });
+        }
+
+        // Optional: price parse & validate
+        const parsedPrice = parseFloat(meal.price);
+        if (isNaN(parsedPrice) || parsedPrice <= 0) {
+          return res.status(400).json({ message: "Invalid price" });
+        }
 
         const mealDoc = {
-          ...meal,
-          rating: meal.rating || 0,
-          chefId: chefUser.chefId,
-          chefName: chefUser.name,
+          foodName: meal.foodName.trim(),
+          foodImage: meal.foodImage,
+          price: parsedPrice,
+          ingredients: Array.isArray(meal.ingredients)
+            ? meal.ingredients
+            : meal.ingredients
+            ? meal.ingredients.split(",").map((i) => i.trim())
+            : [],
+          estimatedDeliveryTime: meal.estimatedDeliveryTime || "30-60 minutes",
+          chefExperience: meal.chefExperience || "",
+          rating: 0, // always start from 0
+          chefId: chefUser._id, // ← FIXED: user-এর MongoDB _id ব্যবহার করুন (unique identifier)
+          chefName: chefUser.name || chefUser.displayName || "Unknown Chef",
           userEmail: chefUser.email,
           createdAt: new Date(),
         };
+
         const result = await mealsCollection.insertOne(mealDoc);
-        res.json(result);
+
+        // Better response: insertedId return করুন (frontend-এ useful)
+        res.status(201).json({
+          insertedId: result.insertedId,
+          message: "Meal added successfully",
+          meal: mealDoc,
+        });
       })
     );
 
@@ -443,37 +481,84 @@ async function run() {
     );
 
     /* -------------------------
-       Orders Routes
-    ------------------------- */
+   Orders Routes
+------------------------- */
     app.post(
       "/orders",
       verifyServerJwt,
       catchAsync(async (req, res) => {
+        const userEmail = req.serverUser?.email;
+
+        if (!userEmail) {
+          return res
+            .status(401)
+            .json({ message: "Unauthorized: Invalid or missing token data." });
+        }
+
         const { foodId, mealName, price, quantity, chefId, userAddress } =
           req.body;
-        const user = await usersCollection.findOne({
-          email: req.serverUser.email,
-        });
-        if (user.status === "fraud")
-          return res.status(403).json({ message: "Fraud user" });
 
+        if (
+          !foodId ||
+          !mealName ||
+          !price ||
+          !quantity ||
+          !chefId ||
+          !userAddress
+        ) {
+          return res
+            .status(400)
+            .json({ message: "Missing required fields for order." });
+        }
+
+        // User existence & Fraud Check
+        const user = await usersCollection.findOne({ email: userEmail });
+
+        if (!user) {
+          return res
+            .status(404)
+            .json({ message: "Order failed: User not found." });
+        }
+
+        if (user.status === "fraud") {
+          return res.status(403).json({ message: "Fraud user" });
+        }
+
+        // Calculate Total (safe parsing)
+        const finalPrice = parseFloat(price);
+        const finalQuantity = parseInt(quantity, 10);
+
+        if (isNaN(finalPrice) || isNaN(finalQuantity) || finalQuantity <= 0) {
+          return res
+            .status(400)
+            .json({ message: "Invalid price or quantity." });
+        }
+
+        const total = finalPrice * finalQuantity;
+
+        // Create Order Document
         const orderDoc = {
           foodId,
           mealName,
-          price: parseFloat(price),
-          quantity: parseInt(quantity),
+          price: finalPrice,
+          quantity: finalQuantity,
+          total,
           chefId,
           userAddress,
-          paymentStatus: "Pending",
-          userEmail: req.serverUser.email,
+          paymentStatus: "unpaid",
           orderStatus: "pending",
+          userEmail,
           orderTime: new Date(),
         };
+
         const result = await ordersCollection.insertOne(orderDoc);
-        res.json(result);
+        res
+          .status(201)
+          .json({ insertedId: result.insertedId, order: orderDoc });
       })
     );
 
+    // GET my orders
     app.get(
       "/orders/my",
       verifyServerJwt,
@@ -486,57 +571,125 @@ async function run() {
       })
     );
 
+    // GET chef order requests
     app.get(
       "/chef/order-requests",
       verifyServerJwt,
       verifyChef,
       catchAsync(async (req, res) => {
+        const chefId = req.serverUser.chefId;
+
+        if (!chefId) {
+          return res.status(403).json({ message: "Chef ID not found" });
+        }
+
         const orders = await ordersCollection
-          .find({ chefId: req.currentUser.chefId })
+          .find({ chefId })
           .sort({ orderTime: -1 })
           .toArray();
         res.json(orders);
       })
     );
 
+    // PATCH order status (chef only)
     app.patch(
       "/orders/:id/status",
       verifyServerJwt,
       verifyChef,
       catchAsync(async (req, res) => {
+        const { newStatus } = req.body;
+        const orderId = req.params.id;
+
+        const order = await ordersCollection.findOne({
+          _id: toObjectId(orderId),
+        });
+
+        if (!order) {
+          return res.status(404).json({ message: "Order not found" });
+        }
+
+        const chefId = req.serverUser.chefId; // অথবা req.currentUser.chefId
+        if (order.chefId !== chefId) {
+          return res.status(403).json({ message: "Forbidden: Not your order" });
+        }
+
+        if (newStatus === "delivered") {
+          if (order.paymentStatus !== "paid") {
+            return res
+              .status(400)
+              .json({ message: "Payment not completed. Cannot deliver." });
+          }
+          if (order.orderStatus !== "accepted") {
+            return res
+              .status(400)
+              .json({ message: "Order must be accepted first." });
+          }
+        }
+
+        const result = await ordersCollection.updateOne(
+          { _id: toObjectId(orderId) },
+          { $set: { orderStatus: newStatus } }
+        );
+
+        res.json({ success: result.modifiedCount > 0 });
+      })
+    );
+
+    // GET single order (user only)
+    app.get(
+      "/orders/:id",
+      verifyServerJwt,
+      catchAsync(async (req, res) => {
         const order = await ordersCollection.findOne({
           _id: toObjectId(req.params.id),
         });
-        if (!order || order.chefId !== req.currentUser.chefId)
+
+        if (!order) {
+          return res.status(404).json({ message: "Order not found" });
+        }
+
+        if (order.userEmail !== req.serverUser.email) {
           return res.status(403).json({ message: "Forbidden" });
-        const { newStatus } = req.body;
-        if (newStatus === "delivered" && order.orderStatus !== "accepted")
-          return res
-            .status(400)
-            .json({ message: "Order must be accepted first" });
-        const result = await ordersCollection.updateOne(
-          { _id: toObjectId(req.params.id) },
-          { $set: { orderStatus: newStatus } }
-        );
-        res.json(result);
+        }
+
+        res.json(order);
       })
     );
 
     /* -------------------------
-       Payments Routes
-    ------------------------- */
+   Payments Routes
+------------------------- */
     app.post(
       "/create-payment-intent",
       verifyServerJwt,
       catchAsync(async (req, res) => {
-        const amount = Math.round(parseFloat(req.body.price) * 100);
-        if (!Number.isFinite(amount) || amount < 50)
-          return res.status(400).json({ message: "Invalid amount" });
+        const { orderId } = req.body;
+
+        if (!orderId) {
+          return res.status(400).json({ message: "Order ID required" });
+        }
+
+        const order = await ordersCollection.findOne({
+          _id: toObjectId(orderId),
+          userEmail: req.serverUser.email,
+          paymentStatus: "unpaid",
+        });
+
+        if (!order) {
+          return res
+            .status(404)
+            .json({ message: "Order not found or already paid" });
+        }
+
+        const amount = Math.round(order.total * 100);
+
         const paymentIntent = await stripe.paymentIntents.create({
           amount,
           currency: "usd",
           payment_method_types: ["card"],
+          metadata: { orderId: orderId },
         });
+
         res.json({ clientSecret: paymentIntent.client_secret });
       })
     );
@@ -546,6 +699,24 @@ async function run() {
       verifyServerJwt,
       catchAsync(async (req, res) => {
         const { orderId, transactionId, amount } = req.body;
+
+        const order = await ordersCollection.findOne({
+          _id: toObjectId(orderId),
+          userEmail: req.serverUser.email,
+          paymentStatus: "unpaid",
+        });
+
+        if (!order) {
+          return res
+            .status(400)
+            .json({ message: "Invalid order or already paid" });
+        }
+
+        // Optional: amount verify
+        if (parseFloat(amount) !== order.total) {
+          return res.status(400).json({ message: "Amount mismatch" });
+        }
+
         const paymentResult = await paymentsCollection.insertOne({
           orderId,
           transactionId,
@@ -553,10 +724,12 @@ async function run() {
           userEmail: req.serverUser.email,
           paymentTime: new Date(),
         });
+
         await ordersCollection.updateOne(
-          { _id: toObjectId(orderId), userEmail: req.serverUser.email },
-          { $set: { paymentStatus: "Paid", transactionId } }
+          { _id: toObjectId(orderId) },
+          { $set: { paymentStatus: "paid", transactionId } }
         );
+
         res.json(paymentResult);
       })
     );
@@ -572,7 +745,6 @@ async function run() {
         res.json(payments);
       })
     );
-
     /* -------------------------
        Reviews Routes
     ------------------------- */
