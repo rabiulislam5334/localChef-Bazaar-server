@@ -417,6 +417,30 @@ async function run() {
         res.json({ message: "Meal deleted" });
       })
     );
+    app.get(
+      "/chef/my-meals",
+      verifyServerJwt,
+      verifyChef,
+      catchAsync(async (req, res) => {
+        const email = req.query.email;
+
+        if (!email) {
+          return res.status(400).json({ message: "Email is required" });
+        }
+
+        // security check
+        if (email !== req.serverUser.email) {
+          return res.status(403).json({ message: "Forbidden" });
+        }
+
+        const meals = await mealsCollection
+          .find({ userEmail: email })
+          .sort({ createdAt: -1 })
+          .toArray();
+
+        res.json(meals);
+      })
+    );
 
     /* -------------------------
        Orders Routes
@@ -642,11 +666,8 @@ async function run() {
 ------------------------- */
     app.get(
       "/users/me",
-      verifyServerJwt, // JWT টোকেন যাচাই করবে
+      verifyServerJwt, //
       catchAsync(async (req, res) => {
-        // নিশ্চিত করুন: আপনার verifyServerJwt middleware req.user এ টোকেন ডেটা সেট করে।
-        // যদি আপনার PATCH রুটে req.serverUser.email ব্যবহার করে থাকেন, তবে এখানেও req.serverUser ব্যবহার করতে হবে।
-        // আমি এখানে req.user ধরে নিচ্ছি, তবে যদি req.serverUser কাজ করে, তবে সেটি ব্যবহার করুন।
         const email = req.user?.email || req.serverUser?.email;
 
         if (!email) {
@@ -662,7 +683,6 @@ async function run() {
           return res.status(404).json({ message: "User not found in DB" });
         }
 
-        // _id ছাড়া বাকি সব তথ্য ক্লায়েন্টের কাছে পাঠানো
         const { _id, ...userInfo } = user;
         res.json(userInfo);
       })
