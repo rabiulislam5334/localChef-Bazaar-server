@@ -328,20 +328,16 @@ async function run() {
 
         // Required fields validation
         if (!meal.foodName || !meal.price || !meal.foodImage) {
-          return res
-            .status(400)
-            .json({
-              message: "Missing required fields: foodName, price, foodImage",
-            });
+          return res.status(400).json({
+            message: "Missing required fields: foodName, price, foodImage",
+          });
         }
 
         // Safety: chefUser & _id exist check (middleware fail হলে prevent করা)
         if (!chefUser || !chefUser._id) {
-          return res
-            .status(500)
-            .json({
-              message: "Chef authentication failed or user data missing",
-            });
+          return res.status(500).json({
+            message: "Chef authentication failed or user data missing",
+          });
         }
 
         // Optional: price parse & validate
@@ -653,6 +649,41 @@ async function run() {
         }
 
         res.json(order);
+      })
+    );
+    // PATCH: Cancel order (User only - New Route)
+    app.patch(
+      "/orders/cancel/:id",
+      verifyServerJwt,
+      catchAsync(async (req, res) => {
+        const orderId = req.params.id;
+        const userEmail = req.serverUser.email;
+
+        const order = await ordersCollection.findOne({
+          _id: toObjectId(orderId),
+        });
+
+        if (!order) {
+          return res.status(404).json({ message: "Order not found" });
+        }
+
+        if (order.userEmail !== userEmail) {
+          return res.status(403).json({ message: "Forbidden: Not your order" });
+        }
+
+        if (order.paymentStatus === "paid") {
+          return res
+            .status(400)
+            .json({ message: "Paid orders cannot be cancelled" });
+        }
+
+        // ৪. অর্ডার আপডেট (Status 'cancelled' করা)
+        const result = await ordersCollection.updateOne(
+          { _id: toObjectId(orderId) },
+          { $set: { orderStatus: "cancelled" } }
+        );
+
+        res.json({ success: true, modifiedCount: result.modifiedCount });
       })
     );
 
