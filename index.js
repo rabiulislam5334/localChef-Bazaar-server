@@ -785,15 +785,63 @@ async function run() {
       verifyServerJwt,
       catchAsync(async (req, res) => {
         const { foodId, rating, comment } = req.body;
+        const userEmail = req.serverUser.email;
+
+        if (!foodId || !rating || !comment) {
+          return res.status(400).json({ message: "Missing fields" });
+        }
+
+        const parsedRating = parseInt(rating);
+        if (parsedRating < 1 || parsedRating > 5) {
+          return res.status(400).json({ message: "Rating must be 1-5" });
+        }
+
+        // 🔒 Prevent duplicate review
+        const alreadyReviewed = await reviewsCollection.findOne({
+          foodId,
+          reviewerEmail: userEmail,
+        });
+
+        if (alreadyReviewed) {
+          return res
+            .status(409)
+            .json({ message: "You already reviewed this meal" });
+        }
+
+        const user = await usersCollection.findOne({ email: userEmail });
+
         const reviewDoc = {
           foodId,
-          rating: parseInt(rating),
+          rating: parsedRating,
           comment,
-          reviewerEmail: req.serverUser.email,
+          reviewerEmail: userEmail,
+          reviewerName: user?.name || user?.displayName || "Anonymous",
+          reviewerImage: user?.photoURL || "",
           date: new Date(),
         };
+
         await reviewsCollection.insertOne(reviewDoc);
-        res.json({ message: "Review added" });
+
+        /* 🔥 UPDATE MEAL AVERAGE RATING */
+        const allReviews = await reviewsCollection.find({ foodId }).toArray();
+
+        const avgRating =
+          allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
+
+        await mealsCollection.updateOne(
+          { _id: toObjectId(foodId) },
+          {
+            $set: {
+              rating: Number(avgRating.toFixed(1)),
+              ratingCount: allReviews.length,
+            },
+          }
+        );
+
+        res.status(201).json({
+          message: "Review submitted successfully!",
+          review: reviewDoc,
+        });
       })
     );
 
@@ -804,6 +852,7 @@ async function run() {
           .find({ foodId: req.params.foodId })
           .sort({ date: -1 })
           .toArray();
+
         res.json(reviews);
       })
     );
@@ -816,6 +865,7 @@ async function run() {
           .find({ reviewerEmail: req.serverUser.email })
           .sort({ date: -1 })
           .toArray();
+
         res.json(reviews);
       })
     );
