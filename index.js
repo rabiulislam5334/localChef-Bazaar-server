@@ -869,6 +869,21 @@ async function run() {
         res.json(reviews);
       })
     );
+    /* -------------------------
+   Get All Reviews (For Home Page)
+   ------------------------- */
+    app.get(
+      "/all-reviews",
+      catchAsync(async (req, res) => {
+        const reviews = await reviewsCollection
+          .find()
+          .sort({ date: -1 })
+          .limit(6)
+          .toArray();
+
+        res.json(reviews);
+      })
+    );
 
     /* -------------------------
        Favorites Routes
