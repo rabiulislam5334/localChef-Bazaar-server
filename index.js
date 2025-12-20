@@ -324,23 +324,20 @@ async function run() {
       verifyChef,
       catchAsync(async (req, res) => {
         const meal = req.body;
-        const chefUser = req.currentUser; // verifyChef থেকে আসা full user document (DB থেকে)
+        const chefUser = req.currentUser; // verifyChef middleware থেকে
 
-        // Required fields validation
         if (!meal.foodName || !meal.price || !meal.foodImage) {
           return res.status(400).json({
             message: "Missing required fields: foodName, price, foodImage",
           });
         }
 
-        // Safety: chefUser & _id exist check (middleware fail হলে prevent করা)
         if (!chefUser || !chefUser._id) {
           return res.status(500).json({
-            message: "Chef authentication failed or user data missing",
+            message: "Chef authentication failed",
           });
         }
 
-        // Optional: price parse & validate
         const parsedPrice = parseFloat(meal.price);
         if (isNaN(parsedPrice) || parsedPrice <= 0) {
           return res.status(400).json({ message: "Invalid price" });
@@ -357,16 +354,19 @@ async function run() {
             : [],
           estimatedDeliveryTime: meal.estimatedDeliveryTime || "30-60 minutes",
           chefExperience: meal.chefExperience || "",
-          rating: 0, // always start from 0
-          chefId: chefUser._id, // ← FIXED: user-এর MongoDB _id ব্যবহার করুন (unique identifier)
+          rating: 0,
+          ratingCount: 0,
+
+          // 🔥 Chef identity (VERY IMPORTANT)
+          chefId: chefUser._id,
           chefName: chefUser.name || chefUser.displayName || "Unknown Chef",
-          userEmail: chefUser.email,
+          chefEmail: chefUser.email,
+
           createdAt: new Date(),
         };
 
         const result = await mealsCollection.insertOne(mealDoc);
 
-        // Better response: insertedId return করুন (frontend-এ useful)
         res.status(201).json({
           insertedId: result.insertedId,
           message: "Meal added successfully",
@@ -486,56 +486,55 @@ async function run() {
         const userEmail = req.serverUser?.email;
 
         if (!userEmail) {
-          return res
-            .status(401)
-            .json({ message: "Unauthorized: Invalid or missing token data." });
+          return res.status(401).json({ message: "Unauthorized" });
         }
 
-        const { foodId, mealName, price, quantity, chefId, userAddress } =
-          req.body;
+        const { foodId, quantity, userAddress } = req.body;
 
-        if (
-          !foodId ||
-          !mealName ||
-          !price ||
-          !quantity ||
-          !chefId ||
-          !userAddress
-        ) {
+        if (!foodId || !quantity || !userAddress) {
+          return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        // 🔍 Fetch meal from DB
+        const meal = await mealsCollection.findOne({
+          _id: toObjectId(foodId),
+        });
+
+        if (!meal) {
+          return res.status(404).json({ message: "Meal not found" });
+        }
+
+        const chefId = meal.chefId;
+        if (!chefId) {
           return res
             .status(400)
-            .json({ message: "Missing required fields for order." });
+            .json({ message: "Invalid meal: chef not found" });
         }
 
-        // User existence & Fraud Check
+        // 🔍 User check
         const user = await usersCollection.findOne({ email: userEmail });
 
         if (!user) {
-          return res
-            .status(404)
-            .json({ message: "Order failed: User not found." });
+          return res.status(404).json({ message: "User not found" });
         }
 
         if (user.status === "fraud") {
           return res.status(403).json({ message: "Fraud user" });
         }
 
-        // Calculate Total (safe parsing)
-        const finalPrice = parseFloat(price);
         const finalQuantity = parseInt(quantity, 10);
+        const finalPrice = parseFloat(meal.price);
 
-        if (isNaN(finalPrice) || isNaN(finalQuantity) || finalQuantity <= 0) {
-          return res
-            .status(400)
-            .json({ message: "Invalid price or quantity." });
+        if (isNaN(finalQuantity) || finalQuantity <= 0) {
+          return res.status(400).json({ message: "Invalid quantity" });
         }
 
         const total = finalPrice * finalQuantity;
 
-        // Create Order Document
+        // ✅ Create order
         const orderDoc = {
-          foodId,
-          mealName,
+          foodId: toObjectId(foodId),
+          mealName: meal.foodName,
           price: finalPrice,
           quantity: finalQuantity,
           total,
@@ -548,9 +547,11 @@ async function run() {
         };
 
         const result = await ordersCollection.insertOne(orderDoc);
-        res
-          .status(201)
-          .json({ insertedId: result.insertedId, order: orderDoc });
+
+        res.status(201).json({
+          insertedId: result.insertedId,
+          order: orderDoc,
+        });
       })
     );
 
