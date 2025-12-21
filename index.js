@@ -960,19 +960,33 @@ async function run() {
       "/users/me",
       verifyServerJwt,
       catchAsync(async (req, res) => {
-        const allowedUpdates = {};
+        const email = req.serverUser?.email;
+
+        if (!email) {
+          return res
+            .status(401)
+            .json({ success: false, message: "Token doesn't contain email!" });
+        }
+
         const { name, address, imageUrl } = req.body;
 
+        const allowedUpdates = {};
         if (name) allowedUpdates.name = name;
         if (address) allowedUpdates.address = address;
         if (imageUrl) allowedUpdates.imageUrl = imageUrl;
 
         const result = await usersCollection.updateOne(
-          { email: req.serverUser.email },
+          { email: email },
           { $set: allowedUpdates }
         );
 
-        res.json(result);
+        if (result.matchedCount > 0) {
+          res
+            .status(200)
+            .json({ success: true, message: "Profile updated successfully" });
+        } else {
+          res.status(404).json({ success: false, message: "User not found" });
+        }
       })
     );
     // GET /payments/my
