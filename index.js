@@ -591,44 +591,82 @@ async function run() {
     // PATCH order status (chef only)
     app.patch(
       "/orders/:id/status",
-      verifyServerJwt,
+      verifyFBToken,
       verifyChef,
       catchAsync(async (req, res) => {
-        const { newStatus } = req.body;
+        const { status } = req.body;
         const orderId = req.params.id;
+        const currentChefId = req.serverUser?.chefId;
+
+        // ✅ Status validation
+        if (!ALLOWED_STATUSES.includes(status)) {
+          return res.status(400).json({ message: "Invalid order status" });
+        }
 
         const order = await ordersCollection.findOne({
-          _id: toObjectId(orderId),
+          _id: new ObjectId(orderId),
         });
 
         if (!order) {
           return res.status(404).json({ message: "Order not found" });
         }
 
-        const chefId = req.serverUser.chefId; // অথবা req.currentUser.chefId
-        if (order.chefId !== chefId) {
-          return res.status(403).json({ message: "Forbidden: Not your order" });
+        // ✅ Chef ownership check
+        if (order.chefId !== currentChefId) {
+          return res.status(403).json({
+            message: "Forbidden: You can only manage your own orders",
+          });
         }
 
-        if (newStatus === "delivered") {
+        // ✅ Already delivered protection
+        if (order.orderStatus === "delivered") {
+          return res
+            .status(400)
+            .json({ message: "Delivered order cannot be modified" });
+        }
+
+        // ✅ Delivery rules
+        if (status === "delivered") {
           if (order.paymentStatus !== "paid") {
             return res
               .status(400)
               .json({ message: "Payment not completed. Cannot deliver." });
           }
+
           if (order.orderStatus !== "accepted") {
             return res
               .status(400)
-              .json({ message: "Order must be accepted first." });
+              .json({ message: "Order must be accepted before delivery." });
           }
         }
 
         const result = await ordersCollection.updateOne(
-          { _id: toObjectId(orderId) },
-          { $set: { orderStatus: newStatus } }
+          { _id: new ObjectId(orderId) },
+          {
+            $set: {
+              orderStatus: status,
+              updatedAt: new Date(),
+            },
+            $push: {
+              statusHistory: {
+                status,
+                time: new Date(),
+              },
+            },
+          }
         );
 
-        res.json({ success: result.modifiedCount > 0 });
+        if (result.modifiedCount > 0) {
+          res.json({
+            success: true,
+            message: `Order successfully ${status}`,
+          });
+        } else {
+          res.status(400).json({
+            success: false,
+            message: "Update failed or no changes made",
+          });
+        }
       })
     );
 
