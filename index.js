@@ -148,7 +148,7 @@ const createVerifyRole = (usersCollection, role) => async (req, res, next) => {
 
   if (role === "chef" && user.status === "fraud")
     return res.status(403).json({ message: "Chef marked as fraud" });
-
+  req.serverUser = { ...req.serverUser, ...user };
   req.currentUser = user;
   next();
 };
