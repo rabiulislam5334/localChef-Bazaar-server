@@ -109,10 +109,15 @@ const verifyFBToken = async (req, res, next) => {
     return res.status(401).json({ message: "Firebase token missing" });
 
   const idToken = authHeader.split(" ")[1];
+
   try {
     const decoded = await admin.auth().verifyIdToken(idToken);
-    req.decoded_email = decoded.email;
-    req.firebase_uid = decoded.uid;
+
+    req.serverUser = {
+      email: decoded.email,
+      uid: decoded.uid,
+    };
+
     next();
   } catch (err) {
     return res.status(401).json({ message: "Invalid Firebase token" });
@@ -132,12 +137,12 @@ const verifyServerJwt = (req, res, next) => {
     return res.status(401).json({ message: "Invalid server JWT" });
   }
 };
-
 const createVerifyRole = (usersCollection, role) => async (req, res, next) => {
-  const email = req.decoded_email || req.serverUser?.email;
+  const email = req.serverUser?.email;
   if (!email) return res.status(401).json({ message: "Unauthorized" });
 
   const user = await usersCollection.findOne({ email });
+
   if (!user || user.role !== role)
     return res.status(403).json({ message: `Forbidden: ${role} only` });
 
@@ -569,21 +574,26 @@ async function run() {
     );
 
     // GET chef order requests
+    const ALLOWED_STATUSES = ["pending", "accepted", "cancelled", "delivered"];
+
     app.get(
       "/chef/order-requests",
       verifyServerJwt,
       verifyChef,
       catchAsync(async (req, res) => {
-        const chefId = req.serverUser.chefId;
+        const chefId = req.serverUser?.chefId;
 
         if (!chefId) {
-          return res.status(403).json({ message: "Chef ID not found" });
+          return res.status(403).json({
+            message: "Chef profile not found for this user",
+          });
         }
 
         const orders = await ordersCollection
           .find({ chefId })
           .sort({ orderTime: -1 })
           .toArray();
+
         res.json(orders);
       })
     );
@@ -591,24 +601,30 @@ async function run() {
     // PATCH order status (chef only)
     app.patch(
       "/orders/:id/status",
-      verifyFBToken,
+      verifyServerJwt,
       verifyChef,
       catchAsync(async (req, res) => {
         const { status } = req.body;
         const orderId = req.params.id;
-        const currentChefId = req.serverUser?.chefId;
+        const currentChefId =
+          req.currentUser?.chefId || req.currentUser?._id.toString();
 
         // ✅ Status validation
         if (!ALLOWED_STATUSES.includes(status)) {
-          return res.status(400).json({ message: "Invalid order status" });
+          return res.status(400).json({
+            message: "Invalid order status",
+          });
         }
 
+        // ✅ Find order
         const order = await ordersCollection.findOne({
           _id: new ObjectId(orderId),
         });
 
         if (!order) {
-          return res.status(404).json({ message: "Order not found" });
+          return res.status(404).json({
+            message: "Order not found",
+          });
         }
 
         // ✅ Chef ownership check
@@ -618,28 +634,29 @@ async function run() {
           });
         }
 
-        // ✅ Already delivered protection
+        // ✅ Delivered order cannot be modified
         if (order.orderStatus === "delivered") {
-          return res
-            .status(400)
-            .json({ message: "Delivered order cannot be modified" });
+          return res.status(400).json({
+            message: "Delivered order cannot be modified",
+          });
         }
 
         // ✅ Delivery rules
         if (status === "delivered") {
           if (order.paymentStatus !== "paid") {
-            return res
-              .status(400)
-              .json({ message: "Payment not completed. Cannot deliver." });
+            return res.status(400).json({
+              message: "Payment not completed. Cannot deliver.",
+            });
           }
 
           if (order.orderStatus !== "accepted") {
-            return res
-              .status(400)
-              .json({ message: "Order must be accepted before delivery." });
+            return res.status(400).json({
+              message: "Order must be accepted before delivery.",
+            });
           }
         }
 
+        // ✅ Update order
         const result = await ordersCollection.updateOne(
           { _id: new ObjectId(orderId) },
           {
@@ -651,6 +668,7 @@ async function run() {
               statusHistory: {
                 status,
                 time: new Date(),
+                updatedBy: "chef",
               },
             },
           }
