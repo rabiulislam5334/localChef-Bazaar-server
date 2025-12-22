@@ -125,17 +125,28 @@ const verifyFBToken = async (req, res, next) => {
 };
 
 const verifyServerJwt = (req, res, next) => {
-  const token =
-    req.cookies.token ||
-    (req.headers.authorization && req.headers.authorization.split(" ")[1]);
-  if (!token) return res.status(401).json({ message: "Server JWT missing" });
+  const tokenFromCookie = req.cookies?.token;
+  const tokenFromHeader = req.headers?.authorization?.split(" ")[1];
 
-  try {
-    req.serverUser = jwt.verify(token, process.env.JWT_SECRET);
-    next();
-  } catch (err) {
-    return res.status(401).json({ message: "Invalid server JWT" });
+  const token = tokenFromCookie || tokenFromHeader;
+
+  if (!token) {
+    return res
+      .status(401)
+      .send({ message: "Unauthorized access: No token found" });
   }
+
+  jwt.verify(token, process.env.JWT_SECRET, (err, decoded) => {
+    if (err) {
+      console.error("JWT Verify Error:", err.message);
+      return res
+        .status(401)
+        .send({ message: "Unauthorized access: Invalid token" });
+    }
+
+    req.serverUser = decoded;
+    next();
+  });
 };
 const createVerifyRole = (usersCollection, role) => async (req, res, next) => {
   const email = req.serverUser?.email;
