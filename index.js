@@ -834,13 +834,29 @@ async function run() {
       })
     );
     /* -------------------------
+      /* -------------------------
        Reviews Routes
     ------------------------- */
+
+    // ১. My Reviews (Specific route oboshshoi dynamic route er upore thakbe)
+    app.get(
+      "/reviews/my",
+      verifyServerJwt,
+      catchAsync(async (req, res) => {
+        const reviews = await reviewsCollection
+          .find({ reviewerEmail: req.serverUser.email })
+          .sort({ date: -1 })
+          .toArray();
+        res.json(reviews);
+      })
+    );
+
+    // ২. Create Review (mealTitle shoho save hobe)
     app.post(
       "/reviews",
       verifyServerJwt,
       catchAsync(async (req, res) => {
-        const { foodId, rating, comment } = req.body;
+        const { foodId, rating, comment, mealTitle } = req.body;
         const userEmail = req.serverUser.email;
 
         if (!foodId || !rating || !comment) {
@@ -848,11 +864,8 @@ async function run() {
         }
 
         const parsedRating = parseInt(rating);
-        if (parsedRating < 1 || parsedRating > 5) {
-          return res.status(400).json({ message: "Rating must be 1-5" });
-        }
 
-        // 🔒 Prevent duplicate review
+        // Prevent duplicate review
         const alreadyReviewed = await reviewsCollection.findOne({
           foodId,
           reviewerEmail: userEmail,
@@ -868,6 +881,7 @@ async function run() {
 
         const reviewDoc = {
           foodId,
+          mealTitle: mealTitle || "Meal Review", // Front-end theke mealTitle ashbe
           rating: parsedRating,
           comment,
           reviewerEmail: userEmail,
@@ -880,7 +894,6 @@ async function run() {
 
         /* 🔥 UPDATE MEAL AVERAGE RATING */
         const allReviews = await reviewsCollection.find({ foodId }).toArray();
-
         const avgRating =
           allReviews.reduce((sum, r) => sum + r.rating, 0) / allReviews.length;
 
@@ -901,6 +914,7 @@ async function run() {
       })
     );
 
+    // ৩. Get Reviews for a Specific Meal (Dynamic route thakbe niche)
     app.get(
       "/reviews/:foodId",
       catchAsync(async (req, res) => {
@@ -908,26 +922,46 @@ async function run() {
           .find({ foodId: req.params.foodId })
           .sort({ date: -1 })
           .toArray();
-
         res.json(reviews);
       })
     );
 
-    app.get(
-      "/reviews/my",
+    // ৪. Update Review (PATCH) - My Review page er Edit button er jonne
+    app.patch(
+      "/reviews/:id",
       verifyServerJwt,
       catchAsync(async (req, res) => {
-        const reviews = await reviewsCollection
-          .find({ reviewerEmail: req.serverUser.email })
-          .sort({ date: -1 })
-          .toArray();
+        const { id } = req.params;
+        const { rating, comment } = req.body;
+        const userEmail = req.serverUser.email;
 
-        res.json(reviews);
+        const result = await reviewsCollection.updateOne(
+          { _id: toObjectId(id), reviewerEmail: userEmail },
+          { $set: { rating: Number(rating), comment, date: new Date() } }
+        );
+
+        res.json(result);
       })
     );
-    /* -------------------------
-   Get All Reviews (For Home Page)
-   ------------------------- */
+
+    // ৫. Delete Review (DELETE) - My Review page er Delete button er jonne
+    app.delete(
+      "/reviews/:id",
+      verifyServerJwt,
+      catchAsync(async (req, res) => {
+        const { id } = req.params;
+        const userEmail = req.serverUser.email;
+
+        const result = await reviewsCollection.deleteOne({
+          _id: toObjectId(id),
+          reviewerEmail: userEmail,
+        });
+
+        res.json(result);
+      })
+    );
+
+    // ৬. Get All Reviews (For Home Page)
     app.get(
       "/all-reviews",
       catchAsync(async (req, res) => {
@@ -936,7 +970,6 @@ async function run() {
           .sort({ date: -1 })
           .limit(6)
           .toArray();
-
         res.json(reviews);
       })
     );
