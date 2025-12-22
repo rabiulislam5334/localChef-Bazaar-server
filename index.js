@@ -169,9 +169,6 @@ const createVerifyRole = (usersCollection, role) => async (req, res, next) => {
 ------------------------- */
 async function run() {
   try {
-    await client.connect();
-    const db = client.db("LocalChefBazaar");
-
     // Collections
     const usersCollection = db.collection("users");
     const mealsCollection = db.collection("meals");
@@ -1181,7 +1178,8 @@ async function run() {
     /* -------------------------
        Server listener
     ------------------------- */
-    await client.db("admin").command({ ping: 1 });
+    // await client.db("admin").command({ ping: 1 });
+
     console.log("MongoDB connected successfully!");
     app.listen(PORT, () => console.log(`Server listening on port ${PORT}`));
   } catch (e) {
