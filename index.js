@@ -170,6 +170,9 @@ const createVerifyRole = (usersCollection, role) => async (req, res, next) => {
 async function run() {
   try {
     // Collections
+    const db = client.db("LocalChefBazaar");
+    // await client.connect();
+    // Collections
     const usersCollection = db.collection("users");
     const mealsCollection = db.collection("meals");
     const ordersCollection = db.collection("orders");
