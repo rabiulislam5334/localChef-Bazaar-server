@@ -434,18 +434,37 @@ async function run() {
       verifyServerJwt,
       verifyChef,
       catchAsync(async (req, res) => {
+        // ১. প্রথমে খাবারটি খুঁজে বের করুন
         const meal = await mealsCollection.findOne({
           _id: toObjectId(req.params.id),
         });
-        if (!meal || meal.userEmail !== req.serverUser.email)
-          return res.status(403).json({ message: "Forbidden" });
+
+        // ২. চেক করুন খাবারটি আদৌ আছে কি না
+        if (!meal) {
+          return res.status(404).json({ message: "Meal not found" });
+        }
+
+        // ৩. সিকিউরিটি চেক (userEmail এর বদলে chefEmail ব্যবহার করুন)
+        // কারণ আপনার ডাটাবেজে ইমেইলটি 'chefEmail' ফিল্ডে আছে
+        if (meal.chefEmail !== req.serverUser.email) {
+          return res
+            .status(403)
+            .json({ message: "Forbidden: This is not your meal" });
+        }
+
+        // ৪. আপডেট ডাটা প্রস্তুত করুন
         const updateData = { ...req.body };
+
+        // অপ্রয়োজনীয় ফিল্ড ডিলিট করুন (নিরাপত্তার জন্য)
+        delete updateData._id;
+        delete updateData.chefEmail; // ইমেইল বা আইডি কখনো আপডেট করবেন না
         delete updateData.chefId;
-        delete updateData.userEmail;
+
         const result = await mealsCollection.updateOne(
           { _id: toObjectId(req.params.id) },
           { $set: updateData }
         );
+
         res.json(result);
       })
     );
@@ -467,6 +486,7 @@ async function run() {
         res.json({ message: "Meal deleted" });
       })
     );
+    // Server side: chef/my-meals route
     app.get(
       "/chef/my-meals",
       verifyServerJwt,
@@ -478,13 +498,10 @@ async function run() {
           return res.status(400).json({ message: "Email is required" });
         }
 
-        // security check
-        if (email !== req.serverUser.email) {
-          return res.status(403).json({ message: "Forbidden" });
-        }
+        const query = { chefEmail: email };
 
         const meals = await mealsCollection
-          .find({ userEmail: email })
+          .find(query)
           .sort({ createdAt: -1 })
           .toArray();
 
@@ -586,29 +603,31 @@ async function run() {
 
     // GET chef order requests
     const ALLOWED_STATUSES = ["pending", "accepted", "cancelled", "delivered"];
-
     app.get(
       "/chef/order-requests",
       verifyServerJwt,
       verifyChef,
       catchAsync(async (req, res) => {
-        const chefId = req.serverUser?.chefId;
+        const userEmail = req.serverUser?.email;
 
-        if (!chefId) {
-          return res.status(403).json({
-            message: "Chef profile not found for this user",
-          });
+        const chefUser = await usersCollection.findOne({ email: userEmail });
+
+        if (!chefUser) {
+          return res.status(404).json({ message: "Chef profile not found" });
         }
 
+        const chefIdString = chefUser._id.toString();
+
         const orders = await ordersCollection
-          .find({ chefId })
+          .find({
+            $or: [{ chefId: chefIdString }, { chefId: chefUser._id }],
+          })
           .sort({ orderTime: -1 })
           .toArray();
 
         res.json(orders);
       })
     );
-
     // PATCH order status (chef only)
     app.patch(
       "/orders/:id/status",
@@ -617,85 +636,43 @@ async function run() {
       catchAsync(async (req, res) => {
         const { status } = req.body;
         const orderId = req.params.id;
-        const currentChefId =
-          req.currentUser?.chefId || req.currentUser?._id.toString();
 
-        // ✅ Status validation
-        if (!ALLOWED_STATUSES.includes(status)) {
-          return res.status(400).json({
-            message: "Invalid order status",
-          });
-        }
+        const loggedInUser = req.serverUser || req.currentUser;
+        const userEmail = loggedInUser?.email;
 
-        // ✅ Find order
+        // ২. ডাটাবেজ থেকে শেফের আসল আইডি বের করুন
+        const chefUser = await usersCollection.findOne({ email: userEmail });
+        const currentChefId = chefUser?._id.toString();
+
+        // ৩. অর্ডারটি খুঁজুন
         const order = await ordersCollection.findOne({
-          _id: new ObjectId(orderId),
+          _id: toObjectId(orderId),
         });
 
         if (!order) {
-          return res.status(404).json({
-            message: "Order not found",
-          });
+          return res.status(404).json({ message: "Order not found" });
         }
 
-        // ✅ Chef ownership check
-        if (order.chefId !== currentChefId) {
+        console.log("Order's Chef ID:", order.chefId);
+        console.log("Your Chef ID (Current):", currentChefId);
+
+        if (String(order.chefId) !== String(currentChefId)) {
           return res.status(403).json({
-            message: "Forbidden: You can only manage your own orders",
+            message: "Forbidden: You are not the chef of this order",
           });
         }
 
-        // ✅ Delivered order cannot be modified
-        if (order.orderStatus === "delivered") {
-          return res.status(400).json({
-            message: "Delivered order cannot be modified",
-          });
-        }
-
-        // ✅ Delivery rules
-        if (status === "delivered") {
-          if (order.paymentStatus !== "paid") {
-            return res.status(400).json({
-              message: "Payment not completed. Cannot deliver.",
-            });
-          }
-
-          if (order.orderStatus !== "accepted") {
-            return res.status(400).json({
-              message: "Order must be accepted before delivery.",
-            });
-          }
-        }
-
-        // ✅ Update order
         const result = await ordersCollection.updateOne(
-          { _id: new ObjectId(orderId) },
+          { _id: toObjectId(orderId) },
           {
-            $set: {
-              orderStatus: status,
-              updatedAt: new Date(),
-            },
+            $set: { orderStatus: status, updatedAt: new Date() },
             $push: {
-              statusHistory: {
-                status,
-                time: new Date(),
-                updatedBy: "chef",
-              },
+              statusHistory: { status, time: new Date(), updatedBy: "chef" },
             },
           }
         );
 
-        if (result.modifiedCount > 0) {
-          res.json({
-            success: true,
-            message: `Order successfully ${status}`,
-          });
-        } else {
-          res.status(400).json({
-            success: false,
-            message: "Update failed or no changes made",
-          });
-        }
+        res.json({ success: true, message: `Order ${status}` });
       })
     );
 
