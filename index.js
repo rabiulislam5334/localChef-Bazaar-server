@@ -477,13 +477,29 @@ async function run() {
         const meal = await mealsCollection.findOne({
           _id: toObjectId(req.params.id),
         });
-        if (!meal || meal.userEmail !== req.serverUser.email)
-          return res.status(403).json({ message: "Forbidden" });
-        await mealsCollection.deleteOne({ _id: toObjectId(req.params.id) });
+
+        // এখানে userEmail এর বদলে chefEmail দিন (আপনার ফ্রন্টএন্ড অনুযায়ী)
+        if (!meal || meal.chefEmail !== req.serverUser.email) {
+          return res
+            .status(403)
+            .json({ message: "Forbidden: You don't own this meal" });
+        }
+
+        // ডিলিট অপারেশন
+        const result = await mealsCollection.deleteOne({
+          _id: toObjectId(req.params.id),
+        });
+
+        // সাথে অন্যান্য কালেকশন পরিষ্কার করা
         await reviewsCollection.deleteMany({ foodId: req.params.id });
         await favoritesCollection.deleteMany({ mealId: req.params.id });
         await ordersCollection.deleteMany({ foodId: req.params.id });
-        res.json({ message: "Meal deleted" });
+
+        // ফ্রন্টএন্ডে deletedCount পাঠালে সুবিধা হয়
+        res.json({
+          deletedCount: result.deletedCount,
+          message: "Meal deleted",
+        });
       })
     );
     // Server side: chef/my-meals route
@@ -821,8 +837,46 @@ async function run() {
         res.json(payments);
       })
     );
+    //  -------------------------role change route
+    // ১. ফ্রড মার্ক করার রাউট
+    app.patch(
+      "/admin/users/:id/fraud",
+      verifyServerJwt,
+      verifyAdmin,
+      catchAsync(async (req, res) => {
+        const { id } = req.params;
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: { status: "fraud" } }
+        );
+        res.json(result);
+      })
+    );
+
+    // ২. রোল পরিবর্তন করার রাউট
+    app.patch(
+      "/admin/users/:id/role",
+      verifyServerJwt,
+      verifyAdmin,
+      catchAsync(async (req, res) => {
+        const { id } = req.params;
+        const { role } = req.body;
+
+        let updateDoc = { role: role };
+
+        // যদি শেফ বানানো হয় তবেই শুধু আইডি জেনারেট হবে
+        if (role === "chef") {
+          updateDoc.chefId = `chef-${Math.floor(1000 + Math.random() * 9000)}`;
+        }
+
+        const result = await usersCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updateDoc }
+        );
+        res.json(result);
+      })
+    );
     /* -------------------------
-      /* -------------------------
        Reviews Routes
     ------------------------- */
 
